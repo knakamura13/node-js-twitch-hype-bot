@@ -1,8 +1,8 @@
-# NodeJS Twitch IRC bot for SaltyTeemo
-A simple, yet elegant chat bot for Twitch built with NodeJS.
+# NodeJS Twitch Hype Bot
+A hype bot for Twitch chat.
 
 ### Getting Started
-1. Clone this repository: `git clone https://github.com/knakamura13/node-js-twitch-irc-bot-for-saltyteemo twitch-bot-js && cd twitch-bot-js`
+1. Clone this repository: `git clone https://github.com/knakamura13/node-js-twitch-hype-bot node-hype-bot && cd node-hype-bot`
  
 2. Install NodeJS for your system: https://nodejs.org/en/download/
 
