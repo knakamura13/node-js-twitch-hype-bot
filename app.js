@@ -2,21 +2,30 @@
  * Library Imports *
  *******************/
 
-import _ from 'lodash'
 import colors from 'chalk'
 import dotenv from 'dotenv'
 import TwitchJs from 'twitch-js'
+import { throttle } from 'lodash'
 dotenv.config()
 
 /*****************
  * Configuration *
  *****************/
 
-const DRY_RUN = false; /* Toggle ability to send messages */
+// Toggle ability to send real messages to Twitch channels.
+const DRY_RUN = false;
+
+// Configure hype parameters
+const MIN_MSG_LEN = 1,
+    MAX_MSG_LEN = 20,
+    MAX_QUEUE_LEN = 5,
+    HYPE_THRESHOLD = 3,
+    HYPE_THROTTLE = 10000
 
 const preferences = {
     channels: [
-        'squishy_life'
+        'squishy_life',
+        'carteldel'
     ],
     credentials: {
         username: `${process.env.TWITCH_USERNAME}`,
@@ -27,6 +36,7 @@ const preferences = {
     }
 };
 
+let messageQueues = {};
 
 /******************
  * TwitchJS Setup *
@@ -41,8 +51,12 @@ const chat = new TwitchJs.Chat({
 
 // Extends TwitchJS functionality.
 chat.say = limiter((msg, channel) => {
-    if (!DRY_RUN)
-        chat.send(`PRIVMSG #${channel} :${msg}`)
+    if (DRY_RUN) {
+        console.log(`[${colors.gray(getFormattedTime())}] ${msg} -- (DRY RUN ENABLED)`);
+        return;
+    }
+
+    chat.send(`PRIVMSG #${channel} :${msg}`)
 }, 1500);
 
 
@@ -92,12 +106,88 @@ function limiter(fn, wait) {
  * Message Handling Functions *
  ******************************/
 
-// Handle any message sent by myself
+function beginHype(channel, message) {
+    console.log(`${colors.gray(getFormattedTime())} Channel '${channel}' is hyped!`);
+    console.log(`Here's the message that triggered the hype: "${message}".`);
+    chat.say(message, channel);
+}
+let hype = throttle(beginHype, HYPE_THROTTLE, {'trailing': false})
+
+/**
+ * Detect hype on a given channel.
+ *
+ * @param channel
+ */
+function detectHype(channel) {
+    let hyped = false,
+        messageCounts = {},
+        hypeMessage = '';
+
+    // Count the occurrences of each unique message in the queue
+    for (let message of messageQueues[channel]) {
+        if (!Number.isInteger(messageCounts[message]))
+            messageCounts[message] = 0;
+
+        messageCounts[message] += 1;
+
+        // If number of occurrences of a message exceeds HYPE_THRESHOLD, then the hype is real
+        if (messageCounts[message] >= HYPE_THRESHOLD) {
+            hypeMessage = message;
+            hyped = true;
+            break
+        }
+    }
+
+    if (hyped) {
+        // Clear the channel's queue
+        messageQueues[channel] = [];
+
+        // beginHype(channel, hypeMessage);
+        hype(channel, hypeMessage);
+    }
+}
+
+/**
+ * Queue all incoming messages per channel with max queue size to be determined.
+ *
+ * @param channel
+ * @param username
+ * @param message
+ */
+function enqueueChatMessage(channel, username, message) {
+    // Ensure the channel queue exists
+    if (!Array.isArray(messageQueues[channel]))
+        messageQueues[channel] = [];
+
+    // Dequeue the oldest message
+    if (messageQueues[channel].length >= MAX_QUEUE_LEN)
+        messageQueues[channel].shift();
+
+    // Enqueue the new message
+    if (message.length >= MIN_MSG_LEN && message.length <= MAX_MSG_LEN) {
+        messageQueues[channel].push(message);
+        detectHype(channel)
+    }
+}
+
+/**
+ * Handle any message sent by myself.
+ *
+ * @param channel
+ * @param username
+ * @param message
+ */
 function handleMyMessage(channel, username, message) {
     console.log(`[${getFormattedTime()}] <${colors.cyanBright(username)}> ${message}`)
 }
 
-// Handle any message sent from any other user
+/**
+ * Handle any message sent from any other user.
+ *
+ * @param channel
+ * @param username
+ * @param message
+ */
 function handleOtherMessage(channel, username, message) {
     // Message includes an @ mention
     if (message.toLowerCase().includes('@' + preferences.credentials.username)) {
@@ -137,9 +227,10 @@ chat.on('PRIVMSG', (msg) => {
             handleMyMessage(...params);
             break;
         default:
-            handleOtherMessage(...params)
-            break;
+            handleOtherMessage(...params);
     }
+
+    enqueueChatMessage(...params);
 });
 
 // Connect to IRC
