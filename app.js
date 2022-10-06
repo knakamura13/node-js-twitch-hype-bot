@@ -5,7 +5,7 @@
 import colors from 'chalk'
 import dotenv from 'dotenv'
 import TwitchJs from 'twitch-js'
-import { throttle } from 'lodash'
+import _ from 'lodash'
 dotenv.config()
 
 /*****************
@@ -111,7 +111,7 @@ function beginHype(channel, message) {
     console.log(`Here's the message that triggered the hype: "${message}".`);
     chat.say(message, channel);
 }
-let hype = throttle(beginHype, HYPE_THROTTLE, {'trailing': false})
+let hype = _.throttle(beginHype, HYPE_THROTTLE, {'trailing': false})
 
 /**
  * Detect hype on a given channel.
