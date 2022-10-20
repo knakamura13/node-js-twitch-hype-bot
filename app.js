@@ -17,15 +17,16 @@ const DRY_RUN = false;
 
 // Configure hype parameters
 const MIN_MSG_LEN = 1,
-    MAX_MSG_LEN = 20,
-    MAX_QUEUE_LEN = 5,
-    HYPE_THRESHOLD = 3,
+    MAX_MSG_LEN = 200,
+    MAX_QUEUE_LEN = 7,
+    HYPE_THRESHOLD = 2,
     HYPE_THROTTLE = 10000
 
 const preferences = {
     channels: [
         'squishy_life',
-        'carteldel'
+        'carteldel',
+	'northernlion'
     ],
     credentials: {
         username: `${process.env.TWITCH_USERNAME}`,
@@ -52,7 +53,7 @@ const chat = new TwitchJs.Chat({
 // Extends TwitchJS functionality.
 chat.say = limiter((msg, channel) => {
     if (DRY_RUN) {
-        console.log(`[${colors.gray(getFormattedTime())}] ${msg} -- (DRY RUN ENABLED)`);
+        console.log(`${colors.gray(getFormattedTime())} ${msg} -- (DRY RUN ENABLED)`);
         return;
     }
 
@@ -71,7 +72,7 @@ chat.say = limiter((msg, channel) => {
  * @returns {string}
  */
 const getFormattedTime = () =>
-    new Date().toLocaleString('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: true })
+    `[${new Date().toLocaleString('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: true })}]`
 
 /**
  * Create a queue of `fn` calls and execute them in order after `wait` milliseconds.
@@ -107,8 +108,7 @@ function limiter(fn, wait) {
  ******************************/
 
 function beginHype(channel, message) {
-    console.log(`${colors.gray(getFormattedTime())} Channel '${channel}' is hyped!`);
-    console.log(`Here's the message that triggered the hype: "${message}".`);
+    console.log(`${colors.gray(getFormattedTime())} '${channel}': "${message}".`);
     chat.say(message, channel);
 }
 let hype = _.throttle(beginHype, HYPE_THROTTLE, {'trailing': false})
@@ -178,7 +178,7 @@ function enqueueChatMessage(channel, username, message) {
  * @param message
  */
 function handleMyMessage(channel, username, message) {
-    console.log(`[${getFormattedTime()}] <${colors.cyanBright(username)}> ${message}`)
+    console.log(`${getFormattedTime()} <${colors.cyanBright(username)}> ${message}`)
 }
 
 /**
@@ -206,7 +206,7 @@ function handleOtherMessage(channel, username, message) {
             _message += word
         }
 
-        console.log(colors.bgRed(`[${getFormattedTime()}] <${(username)}> ${_message}`))
+        console.log(colors.bgRed(`${getFormattedTime()} <${(username)}> ${_message}`))
     }
 }
 
