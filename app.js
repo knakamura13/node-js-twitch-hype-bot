@@ -2,11 +2,19 @@
  * Library Imports *
  *******************/
 
+import 'sqlite3'
+import _ from 'lodash'
 import colors from 'chalk'
 import dotenv from 'dotenv'
 import TwitchJs from 'twitch-js'
-import _ from 'lodash'
+import sqlite3 from 'sqlite3';
+
+// Dotenv initialization
 dotenv.config()
+
+// Sqlite3 initialization
+const db = new sqlite3.Database('sqlite3_db');
+db.run('CREATE TABLE chat_user_stats (Channel TEXT, UserName TEXT UNIQUE, MessageCount INT)', () => {});
 
 /*****************
  * Configuration *
@@ -26,8 +34,9 @@ const MIN_MSG_LEN = 1,
 const preferences = {
     channels: [
         'squishy_life',
-        'carteldel',
-	'northernlion'
+        'northernlion',
+        'lovelymomo',
+        'annacramling'
     ],
     credentials: {
         username: `${process.env.TWITCH_USERNAME}`,
@@ -59,8 +68,8 @@ chat.say = limiter((msg, channel) => {
     }
 
     setTimeout(() => {
-	chat.send(`PRIVMSG #${channel} :${msg}`)
-    }, MSG_DELAY);	
+        chat.send(`PRIVMSG #${channel} :${msg}`)
+    }, MSG_DELAY);
 }, 1500);
 
 
@@ -110,14 +119,22 @@ function limiter(fn, wait) {
  * Message Handling Functions *
  ******************************/
 
-function beginHype(channel, message) {
+/**
+ * Send a message to participate in the hype.
+ *
+ * @param channel
+ * @param message
+ */
+function sendHypeMessage(channel, message) {
+    recordUserChatStats(channel, preferences.credentials.username);
+
     console.log(`${colors.gray(getFormattedTime())} '${channel}': "${message}".`);
     chat.say(message, channel);
 }
-let hype = _.throttle(beginHype, HYPE_THROTTLE, {'trailing': false})
+const sendHypeMessageThrottled = _.throttle(sendHypeMessage, HYPE_THROTTLE, {'trailing': false})
 
 /**
- * Detect hype on a given channel.
+ * Detect hype on a given channel, then participate in hype using sendHypeMessage().
  *
  * @param channel
  */
@@ -145,8 +162,8 @@ function detectHype(channel) {
         // Clear the channel's queue
         messageQueues[channel] = [];
 
-        // beginHype(channel, hypeMessage);
-        hype(channel, hypeMessage);
+        // sendHypeMessage(channel, hypeMessage);
+        sendHypeMessageThrottled(channel, hypeMessage);
     }
 }
 
@@ -158,11 +175,15 @@ function detectHype(channel) {
  * @param channel
  * @param username
  * @param message
+ * @param isModerator
  */
 function enqueueChatMessage(channel, username, message, isModerator) {
     // Filter/skip messages that needn't contribute to hype
     if (filterEnqueueMessage(channel, username, message, isModerator)) 
         return;
+
+    // Record stats about the current user
+    recordUserChatStats(channel, username);
 
     // Ensure the channel queue exists
     if (!Array.isArray(messageQueues[channel]))
@@ -179,16 +200,45 @@ function enqueueChatMessage(channel, username, message, isModerator) {
     }
 }
 
+/**
+ * Filter a message before enqueue, returning True if message should be filtered out of the queue.
+ *
+ * @param channel
+ * @param username
+ * @param message
+ * @param isModerator
+ * @returns {boolean}
+ */
 function filterEnqueueMessage(channel, username, message, isModerator) {
     // Moderator or bot sent the message
     if (isModerator)
-	return true;
+        return true;
 
     // Message is a command
     if (message.charAt(0) === '!')
-	return true;
+        return true;
 
     return false;
+}
+
+/**
+ * Record message count stats for current user with Sqlite3.
+ *
+ * @param channel
+ * @param username
+ */
+function recordUserChatStats(channel, username) {
+    db.serialize(() => {
+        // Insert new user into chat_user_stats
+        let stmt = db.prepare('INSERT INTO chat_user_stats VALUES (?, ?, 0)');
+        stmt.run([channel, username], () => {});
+        stmt.finalize();
+
+        // Increment MessageCount for current user
+        stmt = db.prepare('UPDATE chat_user_stats SET MessageCount = MessageCount + 1 WHERE userName = ?');
+        stmt.run(username, () => {});
+        stmt.finalize();
+    });
 }
 
 /**
