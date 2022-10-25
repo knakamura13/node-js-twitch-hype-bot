@@ -20,7 +20,8 @@ const MIN_MSG_LEN = 1,
     MAX_MSG_LEN = 200,
     MAX_QUEUE_LEN = 7,
     HYPE_THRESHOLD = 2,
-    HYPE_THROTTLE = 10000
+    HYPE_THROTTLE = 10000,
+    MSG_DELAY = 150;
 
 const preferences = {
     channels: [
@@ -57,7 +58,9 @@ chat.say = limiter((msg, channel) => {
         return;
     }
 
-    chat.send(`PRIVMSG #${channel} :${msg}`)
+    setTimeout(() => {
+	chat.send(`PRIVMSG #${channel} :${msg}`)
+    }, MSG_DELAY);	
 }, 1500);
 
 
@@ -150,11 +153,17 @@ function detectHype(channel) {
 /**
  * Queue all incoming messages per channel with max queue size to be determined.
  *
+ * Ignores bot (moderator) messages.
+ *
  * @param channel
  * @param username
  * @param message
  */
-function enqueueChatMessage(channel, username, message) {
+function enqueueChatMessage(channel, username, message, isModerator) {
+    // Filter/skip messages that needn't contribute to hype
+    if (filterEnqueueMessage(channel, username, message, isModerator)) 
+        return;
+
     // Ensure the channel queue exists
     if (!Array.isArray(messageQueues[channel]))
         messageQueues[channel] = [];
@@ -168,6 +177,18 @@ function enqueueChatMessage(channel, username, message) {
         messageQueues[channel].push(message);
         detectHype(channel)
     }
+}
+
+function filterEnqueueMessage(channel, username, message, isModerator) {
+    // Moderator or bot sent the message
+    if (isModerator)
+	return true;
+
+    // Message is a command
+    if (message.charAt(0) === '!')
+	return true;
+
+    return false;
 }
 
 /**
@@ -230,7 +251,7 @@ chat.on('PRIVMSG', (msg) => {
             handleOtherMessage(...params);
     }
 
-    enqueueChatMessage(...params);
+    enqueueChatMessage(...params, msg.isModerator);
 });
 
 // Connect to IRC
