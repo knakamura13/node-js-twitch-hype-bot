@@ -6,15 +6,15 @@ import 'sqlite3'
 import _ from 'lodash'
 import colors from 'chalk'
 import dotenv from 'dotenv'
+import sqlite3 from 'sqlite3'
 import TwitchJs from 'twitch-js'
-import sqlite3 from 'sqlite3';
 
 // Dotenv initialization
 dotenv.config()
 
 // Sqlite3 initialization
 const db = new sqlite3.Database('sqlite3_db');
-db.run('CREATE TABLE chat_user_stats (Channel TEXT, UserName TEXT UNIQUE, MessageCount INT)', () => {});
+db.run('CREATE TABLE chat_user_stats (Channel TEXT, UserName TEXT UNIQUE, MessageCount INT)', VOID_CALLBACK);
 
 
 /*********************
@@ -60,10 +60,10 @@ let messageQueues = {};
 const chat = new TwitchJs.Chat({
     username: TWITCH_PREFERENCES.credentials.username,
     token: TWITCH_PREFERENCES.credentials.token,
-    log: { level: 'error' }
+    log: {level: 'error'}
 });
 
-// Extends TwitchJS functionality.
+// Extends TwitchJS functionality with addition of a limiter to queue message sending processes.
 chat.say = limiter((msg, channel) => {
     if (DRY_RUN) {
         console.log(`${colors.gray(getFormattedTime())} ${msg} -- (DRY RUN ENABLED)`);
@@ -87,7 +87,7 @@ chat.say = limiter((msg, channel) => {
  * @returns {string}
  */
 const getFormattedTime = () =>
-    `[${new Date().toLocaleString('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: true })}]`
+    `[${new Date().toLocaleString('en-US', {hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: true})}]`
 
 /**
  * Create a queue of `fn` calls and execute them in order after `wait` milliseconds.
@@ -100,21 +100,31 @@ function limiter(fn, wait) {
     let isCalled = false,
         calls = [];
 
-    const caller = function() {
+    const caller = function () {
         if (calls.length && !isCalled) {
             isCalled = true;
             calls.shift().call();
-            setTimeout(function() {
+            setTimeout(function () {
                 isCalled = false;
                 caller()
             }, wait)
         }
     };
 
-    return function() {
+    return function () {
         calls.push(fn.bind(this, ...arguments));
         caller()
     }
+}
+
+/**
+ * An empty function for callback placeholders.
+ *
+ * @returns {null}
+ * @constructor
+ */
+function VOID_CALLBACK() {
+    return null;
 }
 
 
@@ -134,6 +144,7 @@ function sendHypeMessage(channel, message) {
     console.log(`${colors.gray(getFormattedTime())} '${channel}': "${message}".`);
     chat.say(message, channel);
 }
+
 const sendHypeMessageThrottled = _.throttle(sendHypeMessage, HYPE_THROTTLE, {'trailing': false});
 
 /**
@@ -248,12 +259,12 @@ function recordUserChatStats(channel, username) {
     db.serialize(() => {
         // Insert new user into chat_user_stats
         let stmt = db.prepare('INSERT INTO chat_user_stats VALUES (?, ?, 0)');
-        stmt.run([channel, username], () => {});
+        stmt.run([channel, username], VOID_CALLBACK);
         stmt.finalize();
 
         // Increment MessageCount for current user
         stmt = db.prepare('UPDATE chat_user_stats SET MessageCount = MessageCount + 1 WHERE userName = ?');
-        stmt.run(username, () => {});
+        stmt.run(username, VOID_CALLBACK);
         stmt.finalize();
     });
 }
