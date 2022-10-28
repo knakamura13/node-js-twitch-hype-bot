@@ -21,7 +21,7 @@ db.run('CREATE TABLE chat_user_stats (Channel TEXT, UserName TEXT UNIQUE, Messag
  * Global Properties *
  *********************/
 
-// Toggle ability to send real messages to Twitch channels.
+// Toggle ability to send real messages to Twitch channels
 const DRY_RUN = false;
 
 // Configure hype parameters
@@ -63,7 +63,7 @@ const chat = new TwitchJs.Chat({
     log: {level: 'error'}
 });
 
-// Extends TwitchJS functionality with addition of a limiter to queue message sending processes.
+// Extends TwitchJS functionality with addition of a limiter to queue message sending processes
 chat.say = limiter((msg, channel) => {
     if (DRY_RUN) {
         console.log(`${colors.gray(getFormattedTime())} ${msg} -- (DRY RUN ENABLED)`);
@@ -150,12 +150,13 @@ const sendHypeMessageThrottled = _.throttle(sendHypeMessage, HYPE_THROTTLE, {'tr
 /**
  * Detect hype on a given channel, then participate in hype using sendHypeMessage().
  *
+ * Uses a channel name as input to load a channel's message queue.
+ * If the queue contains enough duplicate messages, we consider that hype.
+ *
  * @param channel
  */
 function detectHype(channel) {
-    let hyped = false,
-        messageCounts = {},
-        hypeMessage = '';
+    let messageCounts = {};
 
     // Count the occurrences of each unique message in the queue
     for (let message of messageQueues[channel]) {
@@ -166,18 +167,10 @@ function detectHype(channel) {
 
         // If number of occurrences of a message exceeds HYPE_THRESHOLD, then the hype is real
         if (messageCounts[message] >= HYPE_THRESHOLD) {
-            hypeMessage = message;
-            hyped = true;
-            break
+            messageQueues[channel] = [];
+            sendHypeMessageThrottled(channel, message);
+            return;
         }
-    }
-
-    if (hyped) {
-        // Clear the channel's queue
-        messageQueues[channel] = [];
-
-        // sendHypeMessage(channel, hypeMessage);
-        sendHypeMessageThrottled(channel, hypeMessage);
     }
 }
 
@@ -199,8 +192,11 @@ function startDequeueDisposalProcess() {
  * @param username
  * @param message
  * @param isModerator
+ * @param emote
  */
-function enqueueChatMessage(channel, username, message, isModerator) {
+function enqueueChatMessage(channel, username, message, isModerator, emote=null) {
+    message = emote ? emote : message;
+
     // Filter/skip messages that needn't contribute to hype
     if (filterEnqueueMessage(channel, username, message, isModerator))
         return;
@@ -316,6 +312,14 @@ function handleOtherMessage(channel, username, message) {
 
 // Listen for all public messages from users and bots
 chat.on('PRIVMSG', (msg) => {
+    let emote;
+    if (msg.tags.emotes.length) {
+        // Extract emote from indices given by emotes[0]['start'|'end']
+        // ex: "emotes":[{"id":"122430","start":0,"end":7}]
+        const {start, end} = msg.tags.emotes[0];
+        emote = msg.message.substring(start, end + 1);
+    }
+
     msg.channel = msg.channel.replace('#', '');
 
     const params = [msg.channel, msg.username, msg.message];
@@ -329,7 +333,7 @@ chat.on('PRIVMSG', (msg) => {
             handleOtherMessage(...params);
     }
 
-    enqueueChatMessage(...params, msg.isModerator);
+    enqueueChatMessage(...params, msg.isModerator, emote);
 });
 
 // Connect to IRC
