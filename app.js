@@ -16,38 +16,41 @@ dotenv.config()
 const db = new sqlite3.Database('sqlite3_db');
 db.run('CREATE TABLE chat_user_stats (Channel TEXT, UserName TEXT UNIQUE, MessageCount INT)', () => {});
 
-/*****************
- * Configuration *
- *****************/
+
+/*********************
+ * Global Properties *
+ *********************/
 
 // Toggle ability to send real messages to Twitch channels.
 const DRY_RUN = false;
 
 // Configure hype parameters
-const MIN_MSG_LEN = 1,
-    MAX_MSG_LEN = 200,
-    MAX_QUEUE_LEN = 7,
+const HYPE_MIN_MSG_LEN = 1,
+    HYPE_MAX_MSG_LEN = 200,
+    HYPE_MAX_QUEUE_LEN = 7,
     HYPE_THRESHOLD = 2,
     HYPE_THROTTLE = 10000,
-    MSG_DELAY = 150;
+    HYPE_DEQUEUE_TIMER = 30000,
+    MSG_SEND_DELAY = 150,
+    HYPE_USER_IGNORE_LIST = ['nightbot'];
 
-const preferences = {
+const TWITCH_PREFERENCES = {
     channels: [
         'squishy_life',
         'northernlion',
-        'lovelymomo',
         'annacramling'
     ],
     credentials: {
         username: `${process.env.TWITCH_USERNAME}`,
         token: `${process.env.TWITCH_PASSWORD}`
-    },
-    delays: {
-        botResponseDefault: 0
     }
 };
 
+// Regex for detecting a URI
+const REGEX_CONTAINS_URI = new RegExp('(http|ftp|https):\/\/([\w_-]+(?:.[w_-]+)+)([\w.,@?^=%&:\/~+#-]*[\w@?^=%&\/~+#-])');
+
 let messageQueues = {};
+
 
 /******************
  * TwitchJS Setup *
@@ -55,8 +58,8 @@ let messageQueues = {};
 
 // Create an instance of TwitchJS.
 const chat = new TwitchJs.Chat({
-    username: preferences.credentials.username,
-    token: preferences.credentials.token,
+    username: TWITCH_PREFERENCES.credentials.username,
+    token: TWITCH_PREFERENCES.credentials.token,
     log: { level: 'error' }
 });
 
@@ -69,7 +72,7 @@ chat.say = limiter((msg, channel) => {
 
     setTimeout(() => {
         chat.send(`PRIVMSG #${channel} :${msg}`)
-    }, MSG_DELAY);
+    }, MSG_SEND_DELAY);
 }, 1500);
 
 
@@ -126,12 +129,12 @@ function limiter(fn, wait) {
  * @param message
  */
 function sendHypeMessage(channel, message) {
-    recordUserChatStats(channel, preferences.credentials.username);
+    recordUserChatStats(channel, TWITCH_PREFERENCES.credentials.username);
 
     console.log(`${colors.gray(getFormattedTime())} '${channel}': "${message}".`);
     chat.say(message, channel);
 }
-const sendHypeMessageThrottled = _.throttle(sendHypeMessage, HYPE_THROTTLE, {'trailing': false})
+const sendHypeMessageThrottled = _.throttle(sendHypeMessage, HYPE_THROTTLE, {'trailing': false});
 
 /**
  * Detect hype on a given channel, then participate in hype using sendHypeMessage().
@@ -168,6 +171,15 @@ function detectHype(channel) {
 }
 
 /**
+ * Occasionally reset all message queues to account for slow chats.
+ */
+function startDequeueDisposalProcess() {
+    setInterval(_ => {
+        messageQueues = {};
+    }, HYPE_DEQUEUE_TIMER);
+}
+
+/**
  * Queue all incoming messages per channel with max queue size to be determined.
  *
  * Ignores bot (moderator) messages.
@@ -179,7 +191,7 @@ function detectHype(channel) {
  */
 function enqueueChatMessage(channel, username, message, isModerator) {
     // Filter/skip messages that needn't contribute to hype
-    if (filterEnqueueMessage(channel, username, message, isModerator)) 
+    if (filterEnqueueMessage(channel, username, message, isModerator))
         return;
 
     // Record stats about the current user
@@ -190,11 +202,11 @@ function enqueueChatMessage(channel, username, message, isModerator) {
         messageQueues[channel] = [];
 
     // Dequeue the oldest message
-    if (messageQueues[channel].length >= MAX_QUEUE_LEN)
+    if (messageQueues[channel].length >= HYPE_MAX_QUEUE_LEN)
         messageQueues[channel].shift();
 
     // Enqueue the new message
-    if (message.length >= MIN_MSG_LEN && message.length <= MAX_MSG_LEN) {
+    if (message.length >= HYPE_MIN_MSG_LEN && message.length <= HYPE_MAX_MSG_LEN) {
         messageQueues[channel].push(message);
         detectHype(channel)
     }
@@ -211,13 +223,18 @@ function enqueueChatMessage(channel, username, message, isModerator) {
  */
 function filterEnqueueMessage(channel, username, message, isModerator) {
     // Moderator or bot sent the message
-    if (isModerator)
+    if (isModerator || HYPE_USER_IGNORE_LIST.includes(username.toLowerCase()))
         return true;
 
     // Message is a command
     if (message.charAt(0) === '!')
         return true;
 
+    // Message contains a URL
+    if (REGEX_CONTAINS_URI.test(message))
+        return true;
+
+    // Message is okay
     return false;
 }
 
@@ -261,14 +278,14 @@ function handleMyMessage(channel, username, message) {
  */
 function handleOtherMessage(channel, username, message) {
     // Message includes an @ mention
-    if (message.toLowerCase().includes('@' + preferences.credentials.username)) {
+    if (message.toLowerCase().includes('@' + TWITCH_PREFERENCES.credentials.username)) {
         const iterableMessage = message.split(' ').entries();
 
         let _message = '';
 
         // Reconstruct the original message with the emboldened username
         for (let [index, word] of iterableMessage) {
-            if (word.toLowerCase().includes('@' + preferences.credentials.username))
+            if (word.toLowerCase().includes('@' + TWITCH_PREFERENCES.credentials.username))
                 word = colors.whiteBright.bold(word);
 
             if (index > 0)
@@ -294,7 +311,7 @@ chat.on('PRIVMSG', (msg) => {
 
     // Listen for specific users or bots
     switch (msg.username) {
-        case preferences.credentials.username:
+        case TWITCH_PREFERENCES.credentials.username:
             handleMyMessage(...params);
             break;
         default:
@@ -308,11 +325,12 @@ chat.on('PRIVMSG', (msg) => {
 chat.connect()
     .then(() => {
         // Join channels
-        for (const channel of preferences.channels)
+        for (const channel of TWITCH_PREFERENCES.channels)
             chat.join(channel);
 
         // Clear the console and prepare for new output
         console.clear();
-        console.log(colors.greenBright('Connection established.\n'))
-    });
+        console.log(colors.greenBright('Connection established.\n'));
 
+        startDequeueDisposalProcess();
+    });
