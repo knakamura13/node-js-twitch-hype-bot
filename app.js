@@ -26,10 +26,10 @@ const DRY_RUN = false;
 
 // Configure hype parameters
 const HYPE_MIN_MSG_LEN = 1,
-    HYPE_MAX_MSG_LEN = 200,
-    HYPE_MAX_QUEUE_LEN = 8,
-    HYPE_THRESHOLD = 3,
-    HYPE_THROTTLE = 20000,
+    HYPE_MAX_MSG_LEN = 256,
+    HYPE_MAX_QUEUE_LEN = 10,
+    HYPE_THRESHOLD = 5,
+    HYPE_THROTTLE = 30000,
     HYPE_DEQUEUE_TIMER = HYPE_THROTTLE * 2,
     MSG_SEND_DELAY = 150,
     HYPE_USER_IGNORE_LIST = ['nightbot'];
