@@ -40,7 +40,7 @@ const TWITCH_PREFERENCES = {
         'northernlion'
     ],
     credentials: {
-        username: `${process.env.TWITCH_USERNAME}`,
+        username: `${process.env.TWITCH_USERNAME}`.toLowerCase(),
         token: `${process.env.TWITCH_PASSWORD}`
     }
 };
