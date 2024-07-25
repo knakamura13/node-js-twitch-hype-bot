@@ -2,20 +2,35 @@
  * Library Imports *
  *******************/
 
-import 'sqlite3'
-import _ from 'lodash'
-import colors from 'chalk'
-import dotenv from 'dotenv'
-import sqlite3 from 'sqlite3'
-import TwitchJs from 'twitch-js'
+import {MongoClient} from 'mongodb';
+import _ from 'lodash';
+import colors from 'chalk';
+import dotenv from 'dotenv';
+import TwitchJs from 'twitch-js';
 
 // Dotenv initialization
-dotenv.config()
+dotenv.config();
 
-// Sqlite3 initialization
-const db = new sqlite3.Database('sqlite3_db');
-db.run('CREATE TABLE chat_user_stats (Channel TEXT, UserName TEXT UNIQUE, MessageCount INT)', VOID_CALLBACK);
+// MongoDB initialization
+const uri = process.env.MONGO_URL;
+const mongoClient = new MongoClient(uri);
 
+let db;
+
+// Connect to MongoDB
+async function connectToMongo() {
+    try {
+        await mongoClient.connect();
+        db = mongoClient.db('twitch_hype_bot');
+        await db.collection('chat_user_stats').createIndex({UserName: 1}, {unique: true});
+        console.log('Connected to MongoDB and index created.');
+    } catch (err) {
+        console.error('Failed to connect to MongoDB:', err);
+        throw err;
+    }
+}
+
+connectToMongo().catch(console.error);
 
 /*********************
  * Global Properties *
@@ -40,16 +55,15 @@ const TWITCH_PREFERENCES = {
         'northernlion'
     ],
     credentials: {
-        username: `${process.env.TWITCH_USERNAME}`.toLowerCase(),
-        token: `${process.env.TWITCH_PASSWORD}`
+        username: process.env.TWITCH_USERNAME.toLowerCase(),
+        token: process.env.TWITCH_PASSWORD
     }
 };
 
 // Regex for detecting a URI
-const REGEX_CONTAINS_URI = new RegExp('(http|ftp|https):\/\/([\w_-]+(?:.[w_-]+)+)([\w.,@?^=%&:\/~+#-]*[\w@?^=%&\/~+#-])');
+const REGEX_CONTAINS_URI = new RegExp('(http|ftp|https):\/\/([\\w_-]+(?:\\.[\\w_-]+)+)([\\w.,@?^=%&:\/~+#-]*[\\w@?^=%&\/~+#-])');
 
 let messageQueues = {};
-
 
 /******************
  * TwitchJS Setup *
@@ -70,10 +84,9 @@ chat.say = limiter((msg, channel) => {
     }
 
     setTimeout(() => {
-        chat.send(`PRIVMSG #${channel} :${msg}`)
+        chat.send(`PRIVMSG #${channel} :${msg}`);
     }, MSG_SEND_DELAY);
 }, 1500);
-
 
 /********************
  * Helper Functions *
@@ -86,7 +99,7 @@ chat.say = limiter((msg, channel) => {
  * @returns {string}
  */
 const getFormattedTime = () =>
-    `[${new Date().toLocaleString('en-US', {hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: true})}]`
+    `[${new Date().toLocaleString('en-US', {hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: true})}]`;
 
 /**
  * Create a queue of `fn` calls and execute them in order after `wait` milliseconds.
@@ -105,15 +118,15 @@ function limiter(fn, wait) {
             calls.shift().call();
             setTimeout(function () {
                 isCalled = false;
-                caller()
-            }, wait)
+                caller();
+            }, wait);
         }
     };
 
     return function () {
         calls.push(fn.bind(this, ...arguments));
-        caller()
-    }
+        caller();
+    };
 }
 
 /**
@@ -126,7 +139,6 @@ function VOID_CALLBACK() {
     return null;
 }
 
-
 /******************************
  * Message Handling Functions *
  ******************************/
@@ -137,8 +149,8 @@ function VOID_CALLBACK() {
  * @param channel
  * @param message
  */
-function sendHypeMessage(channel, message) {
-    recordUserChatStats(channel, TWITCH_PREFERENCES.credentials.username);
+async function sendHypeMessage(channel, message) {
+    await recordUserChatStats(channel, TWITCH_PREFERENCES.credentials.username);
 
     console.log(`${colors.gray(getFormattedTime())} '${channel}': "${message}".`);
     chat.say(message, channel);
@@ -193,7 +205,7 @@ function startDequeueDisposalProcess() {
  * @param isModerator
  * @param emote
  */
-function enqueueChatMessage(channel, username, message, isModerator, emote=null) {
+function enqueueChatMessage(channel, username, message, isModerator, emote = null) {
     message = emote ? emote : message;
 
     // Filter/skip messages that needn't contribute to hype
@@ -214,7 +226,7 @@ function enqueueChatMessage(channel, username, message, isModerator, emote=null)
     // Enqueue the new message
     if (message.length >= HYPE_MIN_MSG_LEN && message.length <= HYPE_MAX_MSG_LEN) {
         messageQueues[channel].push(message);
-        detectHype(channel)
+        detectHype(channel);
     }
 }
 
@@ -245,23 +257,30 @@ function filterEnqueueMessage(channel, username, message, isModerator) {
 }
 
 /**
- * Record message count stats for current user with Sqlite3.
+ * Record message count stats for current user with MongoDB.
  *
  * @param channel
  * @param username
  */
-function recordUserChatStats(channel, username) {
-    db.serialize(() => {
-        // Insert new user into chat_user_stats
-        let stmt = db.prepare('INSERT INTO chat_user_stats VALUES (?, ?, 0)');
-        stmt.run([channel, username], VOID_CALLBACK);
-        stmt.finalize();
+/**
+ * Record message count stats for current user with MongoDB.
+ *
+ * @param channel
+ * @param username
+ */
+async function recordUserChatStats(channel, username) {
+    try {
+        const filter = { Channel: channel, UserName: username };
+        const update = {
+            $inc: { MessageCount: 1 },
+            $setOnInsert: { Channel: channel, UserName: username }
+        };
+        const options = { upsert: true };
 
-        // Increment MessageCount for current user
-        stmt = db.prepare('UPDATE chat_user_stats SET MessageCount = MessageCount + 1 WHERE userName = ?');
-        stmt.run(username, VOID_CALLBACK);
-        stmt.finalize();
-    });
+        await db.collection('chat_user_stats').updateOne(filter, update, options);
+    } catch (err) {
+        console.error('Error updating chat user stats:', err);
+    }
 }
 
 /**
@@ -272,7 +291,7 @@ function recordUserChatStats(channel, username) {
  * @param message
  */
 function handleMyMessage(channel, username, message) {
-    console.log(`${getFormattedTime()} <${colors.cyanBright(username)}> ${message}`)
+    console.log(`${getFormattedTime()} <${colors.cyanBright(username)}> ${message}`);
 }
 
 /**
@@ -297,13 +316,12 @@ function handleOtherMessage(channel, username, message) {
             if (index > 0)
                 _message += ' ';
 
-            _message += word
+            _message += word;
         }
 
-        console.log(colors.bgRed(`${getFormattedTime()} <${(username)}> ${_message}`))
+        console.log(colors.bgRed(`${getFormattedTime()} <${username}> ${_message}`));
     }
 }
-
 
 /*************************
  * TwitchJS Finalization *

@@ -1,5 +1,0 @@
-/* Describe a table */
-.schema chat_user_stats;
-
-/* Get a list of the top chatters */
-SELECT * FROM chat_user_stats WHERE MessageCount > 10000 AND Channel="northernlion" ORDER BY MessageCount DESC;
