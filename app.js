@@ -2,34 +2,16 @@
  * Library Imports *
  *******************/
 
-import {MongoClient} from 'mongodb';
 import _ from 'lodash';
 import colors from 'chalk';
 import dotenv from 'dotenv';
 import TwitchJs from 'twitch-js';
+import { MongoClient } from 'mongodb';
 
 // Dotenv initialization
 dotenv.config();
 
 // MongoDB initialization
-const uri = process.env.MONGO_URL;
-const mongoClient = new MongoClient(uri);
-
-let db;
-
-// Connect to MongoDB
-async function connectToMongo() {
-    try {
-        await mongoClient.connect();
-        db = mongoClient.db('twitch_hype_bot');
-        await db.collection('chat_user_stats').createIndex({UserName: 1}, {unique: true});
-        console.log('Connected to MongoDB and index created.');
-    } catch (err) {
-        console.error('Failed to connect to MongoDB:', err);
-        throw err;
-    }
-}
-
 connectToMongo().catch(console.error);
 
 /*********************
@@ -61,9 +43,10 @@ const TWITCH_PREFERENCES = {
 };
 
 // Regex for detecting a URI
-const REGEX_CONTAINS_URI = new RegExp('(http|ftp|https):\/\/([\\w_-]+(?:\\.[\\w_-]+)+)([\\w.,@?^=%&:\/~+#-]*[\\w@?^=%&\/~+#-])');
+const REGEX_CONTAINS_URI = new RegExp('(http|ftp|https):\\/\\/([\\w_-]+(?:\\.[\\w_-]+)+)([\\w.,@?^=%&:/~+#-]*[\\w@?^=%&/~+#-])');
 
 let messageQueues = {};
+let db;
 
 /******************
  * TwitchJS Setup *
@@ -73,7 +56,7 @@ let messageQueues = {};
 const chat = new TwitchJs.Chat({
     username: TWITCH_PREFERENCES.credentials.username,
     token: TWITCH_PREFERENCES.credentials.token,
-    log: {level: 'error'}
+    log: { level: 'error' }
 });
 
 // Extends TwitchJS functionality with addition of a limiter to queue message sending processes
@@ -93,13 +76,33 @@ chat.say = limiter((msg, channel) => {
  ********************/
 
 /**
+ * Connects to the Mongo DB.
+ *
+ * @returns {Promise<void>}
+ */
+async function connectToMongo() {
+    try {
+        const mongoClient = new MongoClient(process.env.MONGO_URL);
+
+        await mongoClient.connect();
+        db = mongoClient.db('twitch_hype_bot');
+
+        await db.collection('chat_user_stats').createIndex({ UserName: 1 }, { unique: true });
+        console.log('Connected to MongoDB and index created.');
+    } catch (err) {
+        console.error('Failed to connect to MongoDB:', err);
+        throw err;
+    }
+}
+
+/**
  * Returns the current time as a string, formatted with hours, minutes, seconds, and period.
  *
  * @example "[2:47:10 AM]"
  * @returns {string}
  */
 const getFormattedTime = () =>
-    `[${new Date().toLocaleString('en-US', {hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: true})}]`;
+    `[${new Date().toLocaleString('en-US', { hour: 'numeric', minute: 'numeric', second: 'numeric', hour12: true })}]`;
 
 /**
  * Create a queue of `fn` calls and execute them in order after `wait` milliseconds.
@@ -129,16 +132,6 @@ function limiter(fn, wait) {
     };
 }
 
-/**
- * An empty function for callback placeholders.
- *
- * @returns {null}
- * @constructor
- */
-function VOID_CALLBACK() {
-    return null;
-}
-
 /******************************
  * Message Handling Functions *
  ******************************/
@@ -156,7 +149,7 @@ async function sendHypeMessage(channel, message) {
     chat.say(message, channel);
 }
 
-const sendHypeMessageThrottled = _.throttle(sendHypeMessage, HYPE_THROTTLE, {'trailing': false});
+const sendHypeMessageThrottled = _.throttle(sendHypeMessage, HYPE_THROTTLE, { 'trailing': false });
 
 /**
  * Detect hype on a given channel, then participate in hype using sendHypeMessage().
@@ -171,8 +164,9 @@ function detectHype(channel) {
 
     // Count the occurrences of each unique message in the queue
     for (let message of messageQueues[channel]) {
-        if (!Number.isInteger(messageCounts[message]))
+        if (!Number.isInteger(messageCounts[message])) {
             messageCounts[message] = 0;
+        }
 
         messageCounts[message] += 1;
 
@@ -189,7 +183,7 @@ function detectHype(channel) {
  * Occasionally reset all message queues to account for slow chats.
  */
 function startDequeueDisposalProcess() {
-    setInterval(_ => {
+    setInterval(() => {
         messageQueues = {};
     }, HYPE_DEQUEUE_TIMER);
 }
@@ -209,19 +203,22 @@ function enqueueChatMessage(channel, username, message, isModerator, emote = nul
     message = emote ? emote : message;
 
     // Filter/skip messages that needn't contribute to hype
-    if (filterEnqueueMessage(channel, username, message, isModerator))
+    if (filterEnqueueMessage(channel, username, message, isModerator)) {
         return;
+    }
 
     // Record stats about the current user
     recordUserChatStats(channel, username);
 
     // Ensure the channel queue exists
-    if (!Array.isArray(messageQueues[channel]))
+    if (!Array.isArray(messageQueues[channel])) {
         messageQueues[channel] = [];
+    }
 
     // Dequeue the oldest message
-    if (messageQueues[channel].length >= HYPE_MAX_QUEUE_LEN)
+    if (messageQueues[channel].length >= HYPE_MAX_QUEUE_LEN) {
         messageQueues[channel].shift();
+    }
 
     // Enqueue the new message
     if (message.length >= HYPE_MIN_MSG_LEN && message.length <= HYPE_MAX_MSG_LEN) {
@@ -241,27 +238,24 @@ function enqueueChatMessage(channel, username, message, isModerator, emote = nul
  */
 function filterEnqueueMessage(channel, username, message, isModerator) {
     // Moderator or bot sent the message
-    if (isModerator || HYPE_USER_IGNORE_LIST.includes(username.toLowerCase()))
+    if (isModerator || HYPE_USER_IGNORE_LIST.includes(username.toLowerCase())) {
         return true;
+    }
 
     // Message is a command
-    if (message.charAt(0) === '!')
+    if (message.charAt(0) === '!') {
         return true;
+    }
 
     // Message contains a URL
-    if (REGEX_CONTAINS_URI.test(message))
+    if (REGEX_CONTAINS_URI.test(message)) {
         return true;
+    }
 
     // Message is okay
     return false;
 }
 
-/**
- * Record message count stats for current user with MongoDB.
- *
- * @param channel
- * @param username
- */
 /**
  * Record message count stats for current user with MongoDB.
  *
@@ -310,11 +304,13 @@ function handleOtherMessage(channel, username, message) {
 
         // Reconstruct the original message with the emboldened username
         for (let [index, word] of iterableMessage) {
-            if (word.toLowerCase().includes('@' + TWITCH_PREFERENCES.credentials.username))
+            if (word.toLowerCase().includes('@' + TWITCH_PREFERENCES.credentials.username)) {
                 word = colors.whiteBright.bold(word);
+            }
 
-            if (index > 0)
+            if (index > 0) {
                 _message += ' ';
+            }
 
             _message += word;
         }
@@ -333,7 +329,7 @@ chat.on('PRIVMSG', (msg) => {
     if (msg.tags.emotes.length) {
         // Extract emote from indices given by emotes[0]['start'|'end']
         // ex: "emotes":[{"id":"122430","start":0,"end":7}]
-        const {start, end} = msg.tags.emotes[0];
+        const { start, end } = msg.tags.emotes[0];
         emote = msg.message.substring(start, end + 1);
     }
 
@@ -357,12 +353,16 @@ chat.on('PRIVMSG', (msg) => {
 chat.connect()
     .then(() => {
         // Join channels
-        for (const channel of TWITCH_PREFERENCES.channels)
+        for (const channel of TWITCH_PREFERENCES.channels) {
             chat.join(channel);
+        }
 
         // Clear the console and prepare for new output
         console.clear();
         console.log(colors.greenBright('Connection established.\n'));
 
         startDequeueDisposalProcess();
+    })
+    .catch(err => {
+        console.error('Error connecting to IRC:', err);
     });
