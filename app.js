@@ -7,6 +7,7 @@ import colors from 'chalk';
 import dotenv from 'dotenv';
 import TwitchJs from 'twitch-js';
 import { MongoClient } from 'mongodb';
+import { CronJob } from 'cron';
 
 // Dotenv initialization
 dotenv.config();
@@ -48,6 +49,12 @@ const REGEX_CONTAINS_URI = new RegExp('(http|ftp|https):\\/\\/([\\w_-]+(?:\\.[\\
 let messageQueues = {};
 let db;
 
+// Initialize counters for +2 and -2 messages and the sliding window
+let dailyPositiveCount = 0;
+let dailyNegativeCount = 0;
+let messageWindow = [];
+const WINDOW_SIZE_MS = 60000; // 60 seconds
+
 /******************
  * TwitchJS Setup *
  ******************/
@@ -83,12 +90,16 @@ chat.say = limiter((msg, channel) => {
 async function connectToMongo() {
     try {
         const mongoClient = new MongoClient(process.env.MONGO_URL);
-
         await mongoClient.connect();
         db = mongoClient.db('twitch_hype_bot');
 
+        // Ensure chat_user_stats collection is indexed
         await db.collection('chat_user_stats').createIndex({ UserName: 1 }, { unique: true });
-        console.log('Connected to MongoDB and index created.');
+
+        // Ensure hype_stats collection is indexed
+        await db.collection('hype_stats').createIndex({ timestamp: 1 });
+
+        console.log('Connected to MongoDB and indexes created.');
     } catch (err) {
         console.error('Failed to connect to MongoDB:', err);
         throw err;
@@ -225,6 +236,16 @@ function enqueueChatMessage(channel, username, message, isModerator, emote = nul
         messageQueues[channel].push(message);
         detectHype(channel);
     }
+
+    // Update counters and sliding window for +2 and -2 messages
+    const lowerMessage = message.toLowerCase();
+    if (lowerMessage.includes('+2')) {
+        dailyPositiveCount++;
+        updateMessageWindow('+2');
+    } else if (lowerMessage.includes('-2')) {
+        dailyNegativeCount++;
+        updateMessageWindow('-2');
+    }
 }
 
 /**
@@ -278,6 +299,50 @@ async function recordUserChatStats(channel, username) {
 }
 
 /**
+ * Record the moving average in MongoDB.
+ *
+ * @param movingAverage
+ */
+async function recordMovingAverage(movingAverage) {
+    try {
+        const now = new Date();
+        const timestamp = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours(), now.getMinutes());
+
+        await db.collection('hype_stats').insertOne({ timestamp, movingAverage });
+    } catch (err) {
+        console.error('Error recording moving average:', err);
+    }
+}
+
+/**
+ * Update the message window and calculate the moving average.
+ *
+ * @param type
+ */
+function updateMessageWindow(type) {
+    const now = Date.now();
+    messageWindow.push({ time: now, type });
+
+    // Remove messages outside the window
+    messageWindow = messageWindow.filter(msg => now - msg.time <= WINDOW_SIZE_MS);
+
+    // Calculate the moving average
+    let positiveCount = 0;
+    let negativeCount = 0;
+    for (const msg of messageWindow) {
+        if (msg.type === '+2') positiveCount++;
+        else if (msg.type === '-2') negativeCount++;
+    }
+
+    const movingAverage = (positiveCount * 2) - (negativeCount * 2);
+    const positiveNegativeSymbol = movingAverage >= 0 ? '+' : '-';
+    console.log(`${getFormattedTime()} Moving Average: ${positiveNegativeSymbol}${movingAverage}`);
+
+    // Store the moving average in MongoDB
+    recordMovingAverage(movingAverage);
+}
+
+/**
  * Handle any message sent by myself.
  *
  * @param channel
@@ -318,6 +383,41 @@ function handleOtherMessage(channel, username, message) {
         console.log(colors.bgRed(`${getFormattedTime()} <${username}> ${_message}`));
     }
 }
+
+/**
+ * Reset the daily tallies and store them in MongoDB.
+ */
+async function resetDailyTallies() {
+    try {
+        const date = new Date().toISOString().split('T')[0];
+        const dailyTotal = dailyPositiveCount + dailyNegativeCount;
+
+        await db.collection('hype_stats').insertOne({
+            date,
+            dailyPositiveCount,
+            dailyNegativeCount,
+            dailyTotal
+        });
+
+        // Reset the counters
+        dailyPositiveCount = 0;
+        dailyNegativeCount = 0;
+    } catch (err) {
+        console.error('Error recording daily tallies:', err);
+    }
+}
+
+// Run resetDailyTallies at 8am PST every weekday
+const job = new CronJob('0 8 * * 1-5', () => {
+    resetDailyTallies();
+}, null, true, 'America/Los_Angeles');
+
+job.start();
+
+// Timer to record moving average every `WINDOW_SIZE_MS` seconds
+setInterval(() => {
+    updateMessageWindow('');
+}, WINDOW_SIZE_MS);
 
 /*************************
  * TwitchJS Finalization *
