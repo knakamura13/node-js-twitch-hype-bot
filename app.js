@@ -1,3 +1,42 @@
+/**
+ * Twitch Hype Bot
+ *
+ * This script implements a Twitch chatbot that connects to specified Twitch channels,
+ * monitors chat messages, and performs the following functionalities:
+ *
+ * - Tracks +2 and -2 messages in chat to gauge positive and negative hype.
+ * - Maintains daily counters for +2 and -2 messages and stores them in MongoDB.
+ * - Implements a sliding window to calculate and record the moving average of +2 and -2 messages every 60 seconds.
+ * - Records the moving average in MongoDB with a simplified timestamp (year, month, day, hour, minute).
+ * - Resets daily hype message counters at 8am PST every weekday using a cron job.
+ * - Connects to MongoDB and ensures the necessary collections ('chat_user_stats' and 'hype_stats') are indexed.
+ * - Handles chat messages to count and queue messages, detect hype, and record user chat stats.
+ * - Uses a limiter function to manage the rate of message sending to the chat.
+ * - Filters out messages from bots, moderators, commands, and messages containing URLs.
+ *
+ * Global Properties:
+ * - DRY_RUN: Toggle to enable/disable real message sending to Twitch channels.
+ * - HYPE_MIN_MSG_LEN: Minimum length for a message to be considered for hype tracking.
+ * - HYPE_MAX_MSG_LEN: Maximum length for a message to be considered for hype tracking.
+ * - HYPE_MAX_QUEUE_LEN: Maximum number of messages to queue per channel for hype detection.
+ * - HYPE_THRESHOLD: Number of duplicate messages required to detect hype.
+ * - HYPE_THROTTLE: Throttle duration (in milliseconds) for sending hype messages.
+ * - HYPE_DEQUEUE_TIMER: Timer interval (in milliseconds) to reset message queues.
+ * - MSG_SEND_DELAY: Delay (in milliseconds) before sending a queued message.
+ * - HYPE_USER_IGNORE_LIST: List of users whose messages are ignored for hype tracking (e.g., bots).
+ * - TWITCH_PREFERENCES: Contains channel names and credentials for connecting to Twitch.
+ * - REGEX_CONTAINS_URI: Regular expression to detect URLs in messages.
+ * - WINDOW_SIZE_MS: Sliding window size (in milliseconds) for moving average calculation.
+ *
+ * Libraries Used:
+ * - lodash: Utility library for JavaScript.
+ * - chalk: Terminal string styling library.
+ * - dotenv: Environment variable management library.
+ * - twitch-js: Library for interacting with Twitch chat.
+ * - mongodb: MongoDB driver for Node.js.
+ * - cron: Library for scheduling tasks.
+ */
+
 /*******************
  * Library Imports *
  *******************/
